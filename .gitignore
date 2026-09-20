@@ -1,0 +1,50 @@
+# osu! game data — huge, not code
+Songs/
+Replays/
+Skins/
+beatmaps/
+replays/
+data/
+
+*.osu
+*.osz
+*.osr
+*.mp3
+*.ogg
+*.wav
+*.mp4
+
+# dataset
+index.csv
+
+# python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# models and datasets
+*.npy
+*.npz
+*.pkl
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.parquet
+*.feather
+checkpoints/
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# os
+Thumbs.db
+desktop.ini
+.DS_Store
