@@ -31,11 +31,14 @@ def load_and_open_osu_file_from_path(path):
     return loaded_osu
 
 
-def frame_times(frames):
+def frame_times(frames, keep_lead_in=True):
     times = []
     running_total = 0
-    for frame in frames:
-        running_total += frame.time_delta
+    for index, frame in enumerate(frames):
+        delta = frame.time_delta
+        if index == 0 and delta < 0 and not keep_lead_in:
+            delta = 0
+        running_total += delta
         times.append(running_total)
     return times
 
