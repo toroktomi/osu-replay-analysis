@@ -55,9 +55,3 @@ def build_presses(frames, times):
         previous_keys = keys
     return presses
 
-
-replay = load_and_open_osr_file_from_path(REPLAY_FILE)
-beatmap = load_and_open_osu_file_from_path(BEATMAP_FILE)
-
-times = frame_times(replay.replay_data)
-presses = build_presses(replay.replay_data, times)

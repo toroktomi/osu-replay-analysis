@@ -1,6 +1,6 @@
 from typing import NamedTuple
 
-from slider.beatmap import Spinner
+from slider.beatmap import Slider, Spinner
 
 from osu_beatmap_and_replay_input import (
     ROOT,
@@ -32,6 +32,16 @@ class HitObject(NamedTuple):
     time: float
     x: float
     y: float
+    object_type: str
+
+
+class Verdict(NamedTuple):
+    object_index: int
+    judgement: str
+    hit_error: float
+    cursor_distance: float
+    key: str
+    key_interval: float
 
 
 class Result(NamedTuple):
@@ -42,6 +52,7 @@ class Result(NamedTuple):
     coverage: float
     truncated: bool
     hit_errors: list
+    verdicts: list
     times: list
     presses: list
 
@@ -117,6 +128,7 @@ def build_objects(beatmap, mods=0):
             hit_object.time.total_seconds() * 1000.0,
             hit_object.position.x,
             hit_object.position.y,
+            "slider" if isinstance(hit_object, Slider) else "circle",
         ))
 
     objects.sort(key=lambda hit_object: hit_object.time)
@@ -126,12 +138,15 @@ def build_objects(beatmap, mods=0):
 def judge_presses(objects, presses, difficulty):
     counts = {name: 0 for name in JUDGEMENTS}
     hit_errors = []
+    verdicts = []
     radius_squared = difficulty.radius * difficulty.radius
 
     pending = 0
+    previous_press_time = None
     for press in presses:
         while pending < len(objects) and press.time > objects[pending].time + difficulty.window_50:
             counts["miss"] += 1
+            verdicts.append(Verdict(pending, "miss", None, None, None, None))
             pending += 1
 
         if pending == len(objects):
@@ -144,16 +159,30 @@ def judge_presses(objects, presses, difficulty):
 
         dx = press.x - current.x
         dy = press.y - current.y
-        if dx * dx + dy * dy > radius_squared:
+        distance_squared = dx * dx + dy * dy
+        if distance_squared > radius_squared:
             continue
 
         hit_error = press.time - current.time
-        counts[judge(hit_error, difficulty.od)] += 1
+        judgement = judge(hit_error, difficulty.od)
+        counts[judgement] += 1
         hit_errors.append(hit_error)
+
+        key_interval = None
+        if previous_press_time is not None:
+            key_interval = press.time - previous_press_time
+        previous_press_time = press.time
+
+        verdicts.append(Verdict(pending, judgement, hit_error,
+                                distance_squared ** 0.5, press.key, key_interval))
         pending += 1
 
-    counts["miss"] += len(objects) - pending
-    return counts, hit_errors
+    while pending < len(objects):
+        counts["miss"] += 1
+        verdicts.append(Verdict(pending, "miss", None, None, None, None))
+        pending += 1
+
+    return counts, hit_errors, verdicts
 
 
 def header_counts(replay):
@@ -192,14 +221,14 @@ def simulate_replay(replay, beatmap):
     for keep_lead_in in (True, False):
         times = frame_times(replay.replay_data, keep_lead_in)
         presses = build_presses(replay.replay_data, times)
-        counts, hit_errors = judge_presses(objects, presses, difficulty)
+        counts, hit_errors, verdicts = judge_presses(objects, presses, difficulty)
         counts["300"] += spinners
         rate = match_rate(counts, header)
         coverage = frame_coverage(times, objects)
         best_coverage = max(best_coverage, coverage)
         if best is None or rate > best.match_rate:
             best = Result(counts, header, rate, keep_lead_in, coverage,
-                          False, hit_errors, times, presses)
+                          False, hit_errors, verdicts, times, presses)
 
     return best._replace(
         coverage=best_coverage,
