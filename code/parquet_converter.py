@@ -1,6 +1,8 @@
 import csv
 import math
+import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 import osrparse
@@ -25,6 +27,9 @@ OUTPUT_FILE = OUTPUT_DIR / "objects.parquet"
 
 MIN_MATCH_RATE = 0.95
 ROW_GROUP_SIZE = 50000
+MIN_REPLAYS_PER_PLAYER = 10
+MAX_REPLAYS_PER_PLAYER = 25
+PLAYER_SAMPLE_SEED = 20260929
 MIN_BPM = 5.0
 MAX_BPM = 1200.0
 
@@ -163,7 +168,7 @@ def rows_to_table(rows):
     )
 
 
-def candidate_replays(limit):
+def usable_index_rows():
     with open(INDEX_CSV, encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
             if row["performance-IsFail"] != "False":
@@ -173,13 +178,49 @@ def candidate_replays(limit):
             if not (BEATMAP_DIR / (row["beatmapHash"] + ".osu")).exists():
                 continue
             yield row
-            limit -= 1
-            if limit <= 0:
-                return
 
 
-def extract(limit, output_file=OUTPUT_FILE, min_match_rate=MIN_MATCH_RATE):
+def replays_per_player():
+    counts = Counter()
+    for row in usable_index_rows():
+        counts[row["playerName"]] += 1
+    return counts
+
+
+def choose_players(player_limit, min_replays=MIN_REPLAYS_PER_PLAYER):
+    counts = replays_per_player()
+    eligible = sorted(name for name, n in counts.items() if n >= min_replays)
+    if player_limit >= len(eligible):
+        return set(eligible), counts
+    sampler = random.Random(PLAYER_SAMPLE_SEED)
+    return set(sampler.sample(eligible, player_limit)), counts
+
+
+def candidate_replays(limit):
+    taken = 0
+    for row in usable_index_rows():
+        yield row
+        taken += 1
+        if taken >= limit:
+            return
+
+
+def candidate_replays_by_player(players, cap=MAX_REPLAYS_PER_PLAYER):
+    taken = Counter()
+    for row in usable_index_rows():
+        name = row["playerName"]
+        if name not in players or taken[name] >= cap:
+            continue
+        taken[name] += 1
+        yield row
+
+
+def extract(rows, output_file=OUTPUT_FILE, min_match_rate=MIN_MATCH_RATE,
+            overwrite=False):
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(
+            f"{output_file} already exists; pass --overwrite to replace it")
 
     stats = {"seen": 0, "written": 0, "low_match": 0, "truncated": 0,
              "not_std": 0, "failed": 0, "rows": 0}
@@ -187,7 +228,7 @@ def extract(limit, output_file=OUTPUT_FILE, min_match_rate=MIN_MATCH_RATE):
     writer = pq.ParquetWriter(output_file, ROW_SCHEMA, compression="snappy")
 
     try:
-        for row in candidate_replays(limit):
+        for row in rows:
             stats["seen"] += 1
             try:
                 replay = osrparse.Replay.from_path(
@@ -228,8 +269,24 @@ def extract(limit, output_file=OUTPUT_FILE, min_match_rate=MIN_MATCH_RATE):
 
 
 if __name__ == "__main__":
-    limit = int(sys.argv[1]) if len(sys.argv) > 1 else 200
-    stats = extract(limit)
+    arguments = sys.argv[1:]
+    overwrite = "--overwrite" in arguments
+    positional = [a for a in arguments if not a.startswith("--")]
+
+    count = int(positional[0]) if positional else 200
+    output_file = OUTPUT_DIR / positional[1] if len(positional) > 1 else OUTPUT_FILE
+
+    if "--by-row" in arguments:
+        rows = candidate_replays(count)
+        print(f"sampling {count} replays in index order")
+    else:
+        players, counts = choose_players(count)
+        available = sum(min(counts[name], MAX_REPLAYS_PER_PLAYER) for name in players)
+        print(f"chose {len(players)} players with >={MIN_REPLAYS_PER_PLAYER} replays, "
+              f"up to {MAX_REPLAYS_PER_PLAYER} each: {available} replays available")
+        rows = candidate_replays_by_player(players)
+
+    stats = extract(rows, output_file, overwrite=overwrite)
 
     print(f"replays seen      {stats['seen']}")
     print(f"  written         {stats['written']}")
@@ -238,5 +295,5 @@ if __name__ == "__main__":
     print(f"  not standard    {stats['not_std']}")
     print(f"  errored         {stats['failed']}")
     print(f"object rows       {stats['rows']:,}")
-    print(f"output            {OUTPUT_FILE}  "
-          f"{OUTPUT_FILE.stat().st_size / 1e6:.1f} MB")
+    print(f"output            {output_file}  "
+          f"{output_file.stat().st_size / 1e6:.1f} MB")

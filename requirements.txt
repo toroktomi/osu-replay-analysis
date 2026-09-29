@@ -1,0 +1,5 @@
+numpy==2.5.3
+osrparse==7.0.1
+pandas==3.0.6
+pyarrow==25.0.1
+slider==0.8.4
