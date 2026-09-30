@@ -1,5 +1,9 @@
+lightgbm==4.7.0
 numpy==2.5.3
 osrparse==7.0.1
 pandas==3.0.6
 pyarrow==25.0.1
+scikit-learn==1.9.1
+scipy==1.18.1
 slider==0.8.4
+streamlit==1.64.0

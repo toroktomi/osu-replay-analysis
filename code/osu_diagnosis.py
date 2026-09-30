@@ -22,9 +22,40 @@ AR_EDGES = [0, 350, 450, 600, 900, 10000]
 AR_LABELS = ["<350ms", "350-450", "450-600", "600-900", "900+"]
 
 
-def load_rows(path=DATA_FILE):
-    frame = pq.read_table(path).to_pandas()
+BANDED_METRICS = [
+    {"key": "consistency_bpm", "label": "tapping consistency by BPM",
+     "band": "bpm_band", "column": "hit_error_ms", "agg": "std",
+     "lower_is_better": True, "rank_on_abs": False, "unit": "ms",
+     "order": BPM_LABELS, "decimals": 2},
+    {"key": "bias_bpm", "label": "timing bias by BPM",
+     "band": "bpm_band", "column": "hit_error_ms", "agg": "mean",
+     "lower_is_better": True, "rank_on_abs": True, "unit": "ms",
+     "order": BPM_LABELS, "decimals": 2},
+    {"key": "aim_jump", "label": "aim error by jump distance",
+     "band": "jump_band", "column": "aim_error_ratio", "agg": "mean",
+     "lower_is_better": True, "rank_on_abs": False, "unit": "r",
+     "order": JUMP_LABELS, "decimals": 3},
+    {"key": "hitrate_jump", "label": "hit rate by jump distance",
+     "band": "jump_band", "column": "hit", "agg": "mean",
+     "lower_is_better": False, "rank_on_abs": False, "unit": "",
+     "order": JUMP_LABELS, "decimals": 4},
+    {"key": "consistency_ar", "label": "tapping consistency by reading time",
+     "band": "ar_band", "column": "hit_error_ms", "agg": "std",
+     "lower_is_better": True, "rank_on_abs": False, "unit": "ms",
+     "order": AR_LABELS, "decimals": 2},
+]
 
+OVERALL_METRICS = [
+    {"key": "alternation", "label": "alternation rate",
+     "lower_is_better": False, "unit": "", "decimals": 2},
+    {"key": "imbalance", "label": "K1/K2 imbalance",
+     "lower_is_better": True, "unit": "", "decimals": 2},
+    {"key": "stamina_drift", "label": "stamina drift",
+     "lower_is_better": True, "unit": "ms", "decimals": 2},
+]
+
+
+def add_diagnosis_columns(frame):
     frame["aim_error_ratio"] = frame["cursor_distance_px"] / frame["radius_px"]
     frame["hit"] = (frame["judgement"] != "miss").astype("float32")
 
@@ -38,6 +69,10 @@ def load_rows(path=DATA_FILE):
     frame["ar_band"] = pd.cut(frame["effective_ar_ms"], AR_EDGES,
                               labels=AR_LABELS, right=False)
     return frame
+
+
+def load_rows(path=DATA_FILE):
+    return add_diagnosis_columns(pq.read_table(path).to_pandas())
 
 
 def bucket_values(frame, band_column, value_column, aggregation):
@@ -86,6 +121,31 @@ def banded_report(frame, player, band_column, value_column, aggregation,
         lines.append(f"    {str(band):<10} {shown:>9.{decimals}f} {unit:<4} "
                      f"{ordinal(percentile):>6} percentile   (n={population} players)")
     return lines
+
+
+def banded_values(frame, spec, min_objects=MIN_OBJECTS_PER_BUCKET):
+    grouped = frame.groupby(["player", spec["band"]], observed=True)[spec["column"]]
+    values = grouped.agg(spec["agg"])
+    counts = grouped.count()
+    return values[counts >= min_objects].dropna()
+
+
+def overall_values(frame):
+    alternation, imbalance, _ = alternation_and_balance(frame)
+    _, _, drift = stamina(frame)
+    return {"alternation": alternation, "imbalance": imbalance,
+            "stamina_drift": drift}
+
+
+def percentile_in_population(population, value, lower_is_better):
+    if not len(population) or value is None or pd.isna(value):
+        return None
+    population = pd.Series(population, dtype="float64")
+    if lower_is_better:
+        beaten = (population > value).sum()
+    else:
+        beaten = (population < value).sum()
+    return beaten / len(population) * 100.0
 
 
 def alternation_and_balance(frame):
