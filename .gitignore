@@ -4,7 +4,9 @@ Replays/
 Skins/
 beatmaps/
 replays/
-data/
+data/*
+!data/baseline.json
+!data/model.txt
 
 *.osu
 *.osz

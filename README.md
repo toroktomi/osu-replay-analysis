@@ -269,10 +269,25 @@ better on **none**, worse on 6. Three follow-break rules were tried; requiring c
 following beat sampling each tick independently, so stable does punish releasing
 mid-slider, but even the best variant lost, so the code was removed.
 
-The later 373-replay validation then showed match rate climbing with circle ratio, which
-says the approximation *does* cost accuracy. Both results can hold at once: sliders matter,
-and that particular follow rule was not the way to capture them. Re-testing at scale rather
-than on 10 replays is the open next step.
+Re-tested on 276 replays after validation showed match rate climbing with circle ratio,
+the result was worse still — and informatively so:
+
+| circles / objects | n | head only | with sliders | delta |
+|---|---|---|---|---|
+| < 50% | 43 | 95.27% | 87.35% | **−7.92%** |
+| 50–65% | 121 | 97.19% | 91.00% | −6.19% |
+| 65–80% | 87 | 98.61% | 95.07% | −3.54% |
+| 80–100% | 25 | 98.77% | 97.79% | −0.97% |
+
+Better on 66 replays, worse on 199. The harm scales with how much slider logic actually
+runs, which is the signature of a wrong model rather than a missing one — most likely the
+requirement that a key stay held across every frame between tick points, which punishes
+players who alternate through a slider.
+
+So two things are true at once. Slider-heavy maps do reconstruct worse, by about 3.5 points
+of median, so the approximation costs something real. And the fraction-of-tick-points model,
+tested at two scales, is not the explanation. Head-only stays, and the cause of the
+slider-heavy gap is an open question.
 
 **An expectation that did not replicate.** Early on I expected difficulty modelling to
 dominate and personalisation to be a small adjustment worth around one accuracy point.
@@ -292,8 +307,9 @@ shift that balance.
   pattern for *anyone*" poorly. In practice this case does not arise, because a real user
   always arrives with their own replays.
 - About 5% of replays cannot be reconstructed at all and are excluded.
-- Slider-heavy maps reconstruct about 4 points worse by median than circle-heavy ones, so
-  the simplified slider handling has a measurable cost.
+- Slider-heavy maps reconstruct about 3.5 points worse by median than circle-heavy ones. The
+  cause is unidentified — a full slider-tick simulation was tested twice and made it worse,
+  not better.
 - Replays in the dataset were submitted to a replay-rendering service, so they skew toward
   plays people wanted to show off. Not a representative sample of normal play.
 - 13.7% of dates in the index are unparseable, so "first N replays" above is a stable
