@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 import random
 import sys
@@ -24,6 +25,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 INDEX_CSV = ROOT / "index.csv"
 OUTPUT_DIR = ROOT / "data"
 OUTPUT_FILE = OUTPUT_DIR / "objects.parquet"
+PLAYER_COUNTS_FILE = OUTPUT_DIR / "player_counts.json"
 
 MIN_MATCH_RATE = 0.95
 ROW_GROUP_SIZE = 50000
@@ -168,27 +170,40 @@ def rows_to_table(rows):
     )
 
 
-def usable_index_rows():
+def index_rows():
     with open(INDEX_CSV, encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
             if row["performance-IsFail"] != "False":
                 continue
-            if not (REPLAY_DIR / (row["replayHash"] + ".osr")).exists():
-                continue
-            if not (BEATMAP_DIR / (row["beatmapHash"] + ".osu")).exists():
-                continue
             yield row
 
 
-def replays_per_player():
+def files_present(row):
+    return ((REPLAY_DIR / (row["replayHash"] + ".osr")).exists()
+            and (BEATMAP_DIR / (row["beatmapHash"] + ".osu")).exists())
+
+
+def usable_index_rows():
+    for row in index_rows():
+        if files_present(row):
+            yield row
+
+
+def replays_per_player(use_cache=True):
+    if use_cache and PLAYER_COUNTS_FILE.exists():
+        return Counter(json.loads(PLAYER_COUNTS_FILE.read_text(encoding="utf-8")))
+
     counts = Counter()
     for row in usable_index_rows():
         counts[row["playerName"]] += 1
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PLAYER_COUNTS_FILE.write_text(json.dumps(counts), encoding="utf-8")
     return counts
 
 
-def choose_players(player_limit, min_replays=MIN_REPLAYS_PER_PLAYER):
-    counts = replays_per_player()
+def choose_players(player_limit, min_replays=MIN_REPLAYS_PER_PLAYER, use_cache=True):
+    counts = replays_per_player(use_cache)
     eligible = sorted(name for name, n in counts.items() if n >= min_replays)
     if player_limit >= len(eligible):
         return set(eligible), counts
@@ -207,9 +222,11 @@ def candidate_replays(limit):
 
 def candidate_replays_by_player(players, cap=MAX_REPLAYS_PER_PLAYER):
     taken = Counter()
-    for row in usable_index_rows():
+    for row in index_rows():
         name = row["playerName"]
         if name not in players or taken[name] >= cap:
+            continue
+        if not files_present(row):
             continue
         taken[name] += 1
         yield row
@@ -276,15 +293,21 @@ if __name__ == "__main__":
     count = int(positional[0]) if positional else 200
     output_file = OUTPUT_DIR / positional[1] if len(positional) > 1 else OUTPUT_FILE
 
+    cap = MAX_REPLAYS_PER_PLAYER
+    for argument in arguments:
+        if argument.startswith("--cap="):
+            cap = int(argument.split("=", 1)[1])
+
     if "--by-row" in arguments:
         rows = candidate_replays(count)
         print(f"sampling {count} replays in index order")
     else:
-        players, counts = choose_players(count)
-        available = sum(min(counts[name], MAX_REPLAYS_PER_PLAYER) for name in players)
+        players, counts = choose_players(count,
+                                          use_cache="--rescan" not in arguments)
+        available = sum(min(counts[name], cap) for name in players)
         print(f"chose {len(players)} players with >={MIN_REPLAYS_PER_PLAYER} replays, "
-              f"up to {MAX_REPLAYS_PER_PLAYER} each: {available} replays available")
-        rows = candidate_replays_by_player(players)
+              f"up to {cap} each: {available} replays available")
+        rows = candidate_replays_by_player(players, cap)
 
     stats = extract(rows, output_file, overwrite=overwrite)
 

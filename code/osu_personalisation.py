@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from osu_prediction import (
+    DATA_FILE,
     LGB_PARAMS,
     NUM_ROUNDS,
     OBJECT_FEATURES,
@@ -61,7 +62,12 @@ def apply_skill(rows, skill_values):
 
 
 def main():
-    frame = load_rows()
+    data_file = DATA_FILE
+    for argument in sys.argv[1:]:
+        if argument.endswith(".parquet"):
+            data_file = DATA_FILE.parent / argument
+    print(f"data: {data_file.name}")
+    frame = load_rows(data_file)
     held_out = split_players(frame)
 
     train_rows = frame[~frame["player"].isin(held_out)].copy()

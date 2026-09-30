@@ -188,7 +188,12 @@ def play_level_frame(rows, skill):
 
 
 def main():
-    frame = load_rows()
+    data_file = DATA_FILE
+    for argument in sys.argv[1:]:
+        if argument.endswith(".parquet"):
+            data_file = DATA_FILE.parent / argument
+    print(f"data: {data_file.name}")
+    frame = load_rows(data_file)
     train_rows, test_rows = split_by_beatmap(frame)
 
     skill = player_skill(train_rows)

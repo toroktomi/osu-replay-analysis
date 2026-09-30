@@ -3,15 +3,18 @@
 Reconstructing per-note performance from osu!standard replay files, to tell a player
 **what they are bad at** and **how they will do on a map they have never played**.
 
+**[Try it live](https://osu-replay-analysis-eujut2agcapg6zphveuwnw.streamlit.app/)** —
+drop in your own replays and their beatmaps.
+
 ## Results
 
 | | |
 |---|---|
 | Hit detection re-simulated from raw replay inputs | **97.8% median** agreement with the score stored in the replay |
-| Per-note dataset extracted | **2.06M hit objects**, 2,680 plays, 200 players |
-| Predicting a play's accuracy | **2.35 accuracy points MAE**, against 4.24 for the population average |
-| Predicting *where* a player will miss | **0.853 AUC** per hit object |
-| Personal data needed to profile a new player | **~10 replays**, worth 2.3 accuracy points |
+| Per-note dataset extracted | **5.8M hit objects**, 7,554 plays, 598 players, 4,753 beatmaps |
+| Predicting a play's accuracy | **2.68 accuracy points MAE**, against 4.32 for the population average |
+| Predicting *where* a player will miss | **0.843 AUC** per hit object |
+| Personal data needed to profile a new player | **~3 replays**, worth 1-2 accuracy points |
 
 The diagnosis output, for a real player in the dataset:
 
@@ -52,8 +55,8 @@ every reconstruction grades itself with no manual labelling.
 | 2 | One replay end to end | 99.6% match on the test replay |
 | 3 | Validate across many replays, fix what breaks | 97.8% median match; three bugs found and fixed |
 | 4 | Mod handling, validated per mod | HR flip and EZ/HR scaling verified; no mod catastrophically broken |
-| 5 | Extract one row per hit object | 2.06M rows to parquet, streamed |
-| 6 | Diagnosis with population percentiles | 7 metrics, ranked against 200 players |
+| 5 | Extract one row per hit object | 5.8M rows to parquet, streamed |
+| 6 | Diagnosis with population percentiles | 7 metrics, ranked against 598 players |
 | 7 | Prediction model and baselines | Beats all three baselines |
 | 8 | App that takes replays and shows the diagnosis | Built (Streamlit) |
 
@@ -174,12 +177,15 @@ Written streaming, in 50,000-row groups, so memory stays flat regardless of data
 **Sampling matters more than it looks.** A first extraction walked the index in file order
 and produced 1,289 players with one replay each — useless for anything per-player. The
 converter now counts replays per player first, then samples players with 10+ replays and
-takes up to 25 each:
+takes up to a capped number each:
 
 ```
-2,064,949 rows   2,680 plays   200 players   2,018 beatmaps   57 MB
-replays per player:  median 14   (149 of 200 players have 10+)
+5,810,761 rows   7,554 plays   598 players   4,753 beatmaps   161 MB
+replays per player:  median 13   (410 of 598 players have 10+)
 ```
+
+Yield is about 65%: of 11,661 candidate replays, 7,554 reconstructed cleanly enough to use,
+3,394 fell below 95% match and 681 were flagged as truncated.
 
 ## Diagnosis
 
@@ -192,8 +198,8 @@ a map to the last.
 A bucket is suppressed unless it has **40+ objects and 12+ players**, otherwise the
 percentile is noise.
 
-Per-player spread in timing consistency runs from 7.4 ms to 22.3 ms across the 200 players,
-so there is real signal to rank against.
+Per-player spread in timing consistency runs from roughly 7 ms to 22 ms across the
+population, so there is real signal to rank against.
 
 ## Prediction
 
@@ -207,38 +213,71 @@ Two rules, both enforced in code:
 - **Player skill features are computed on the training split only**, or the model reads a
   player's test performance out of their own features.
 
+Trained on **5.8M hit objects** from 7,554 plays, 598 players and 4,753 beatmaps.
+
 ### Against baselines
 
 A model without baselines means nothing. In increasing order of difficulty:
 
 | | MAE | median | bias |
 |---|---|---|---|
-| Global mean accuracy | 4.241 | 3.717 | −0.556 |
-| Player's own historical mean | 3.240 | 2.289 | −0.331 |
-| LightGBM on play-level summaries | 2.763 | 1.678 | −0.260 |
-| **Per-object model** | **2.351** | **1.464** | −0.095 |
+| Global mean accuracy | 4.315 | 3.408 | +0.498 |
+| Player's own historical mean | 3.568 | 2.289 | +0.176 |
+| LightGBM on play-level summaries | 2.988 | 1.778 | +0.454 |
+| **Per-object model** | **2.676** | **1.582** | +0.323 |
 
-Per-object miss AUC **0.8528**, per-object accuracy 0.9229.
+Per-object miss AUC **0.8431**, per-object accuracy 0.9119.
 
-Accuracy on the same map varies 1–3% run to run, so ~2.4 points is close to the irreducible
-noise floor. A bigger model is not the useful next step.
+Accuracy on the same map varies 1–3% run to run, so this is close to the irreducible noise
+floor. A bigger model is not the useful next step — and neither is more data, which is
+measured below.
 
 ### What the model actually learns
 
-Pattern difficulty and player skill contribute **roughly equally and are strongly
-complementary** — neither alone gets within one accuracy point of the pair:
+Pattern difficulty and player skill are **strongly complementary** — neither alone gets
+within one accuracy point of the pair:
 
 | features | MAE | miss AUC |
 |---|---|---|
-| Pattern geometry only | 3.908 | **0.7748** |
-| Player skill only | **3.426** | 0.7145 |
-| Both | **2.351** | **0.8528** |
+| Pattern geometry only | 4.062 | **0.7950** |
+| Player skill only | **3.842** | 0.6893 |
+| Both | **2.676** | **0.8431** |
 
-The split is informative. Geometry alone has the better **miss AUC** — it knows *where* in
-a map errors happen. Skill alone has the better **MAE** — it knows *how many* there will be.
-Skill sets the level; geometry distributes it. Since the more useful output is where a
-player will struggle rather than a single percentage, difficulty modelling carries the half
-that matters most.
+The split held in the same direction across three differently-sampled datasets. Geometry
+alone has the better **miss AUC** — it knows *where* in a map errors happen. Skill alone has
+the better **MAE** — it knows *how many* there will be. Skill sets the level; geometry
+distributes it.
+
+### More data does not help — profile coverage does
+
+Three datasets were extracted with different sampling shapes:
+
+| | objects | players | beatmaps | median replays/player |
+|---|---|---|---|---|
+| deep | 2.1M | 200 | 2,018 | 14 |
+| wide | 4.2M | 597 | 3,743 | 10 |
+| full | 5.8M | 598 | 4,753 | 13 |
+
+Comparing their reported MAE would be meaningless, because each has its own test population
+and a dataset with more thinly-profiled players is simply harder to predict. So the
+comparison was done properly instead: one split of the largest dataset, two models trained
+on different amounts of *the same* training data, both scored on **the same test set**.
+
+| training data | rows | beatmaps | MAE | miss AUC |
+|---|---|---|---|---|
+| all 597 players | 4,365,159 | 3,564 | 2.238 | 0.8448 |
+| 200 deep players | 2,093,975 | 1,904 | 2.252 | 0.8441 |
+
+**0.015 accuracy points.** Doubling the training data and the map count bought nothing.
+
+Scored on the *unrestricted* test set the gap looked like 1.10 points — but the smaller
+model had profiles for only 40% of test players, and the rest fell back to population
+averages. Once every test player has a profile under both models, the difference vanishes.
+The apparent benefit of more data was entirely profile coverage.
+
+This also disproves the obvious explanation for the cold-start weakness below: going from
+2,018 to 4,753 beatmaps did not make the model better at predicting a player it knows
+nothing about.
 
 ### How much personal data a new player needs
 
@@ -246,18 +285,23 @@ that matters most.
 their first N replays; every row below is scored on the **same 212 plays**, so only the
 personal information changes.
 
-| profile replays | MAE | median |
+| profile replays | MAE (full) | MAE (deep) |
 |---|---|---|
-| none (population average) | 4.654 | 3.551 |
-| 1 | 3.244 | 1.799 |
-| 3 | 2.785 | 1.546 |
-| 5 | 2.572 | 1.499 |
-| 10 | **2.341** | 1.441 |
-| *global mean, no model* | *4.502* | *3.936* |
+| none (population average) | 4.244 | 4.654 |
+| 1 | 3.351 | 3.244 |
+| 3 | **2.812** | 2.785 |
+| 5 | 2.828 | 2.572 |
+| 10 | 2.831 | **2.341** |
+| *global mean, no model* | *3.704* | *4.502* |
 
-**About 10 replays is enough**, and personalisation is worth **2.3 accuracy points**. One
-replay buys most of it. Nobody has to grind data for this — osu!stable already saves an
-`.osr` for every play ever made.
+**About three replays is enough** — the curve is flat from there on the larger dataset.
+Nobody has to grind data for this, since osu!stable already saves an `.osr` for every play
+ever made.
+
+Run on two datasets the effect measures **1.4 and 2.3 accuracy points**, on ~200 test plays
+each. The honest statement is that personalisation is worth somewhere between one and two
+accuracy points; the spread between measurements is wider than the precision of either, so a
+single figure would be false confidence.
 
 ## What did not work
 
@@ -300,12 +344,12 @@ shift that balance.
 ## Limitations
 
 - osu!standard only, judged by osu!stable's rules.
-- **Cold start.** With no replays at all from a player, the model scores 4.65 MAE while
-  simply guessing the global average scores 4.50 — it is no better than a constant. The
-  cause is map breadth: 2,018 beatmaps here against ~3,700 in a comparable dataset, so the
-  model learned "how hard is this pattern for *this person*" well and "how hard is this
-  pattern for *anyone*" poorly. In practice this case does not arise, because a real user
-  always arrives with their own replays.
+- **Cold start.** With no replays at all from a player the model is no better than guessing
+  the global average — 4.24 MAE against 3.70 for the constant, so slightly worse. Map
+  breadth was the obvious suspect and was tested directly: 2.4x more beatmaps changed
+  nothing. The cause is unresolved. In practice the case does not arise, since a real user
+  always arrives with their own replays, but it does mean this is a personalisation model
+  that uses pattern context rather than a difficulty model with a personal adjustment.
 - About 5% of replays cannot be reconstructed at all and are excluded.
 - Slider-heavy maps reconstruct about 3.5 points worse by median than circle-heavy ones. The
   cause is unidentified — a full slider-tick simulation was tested twice and made it worse,
@@ -356,7 +400,7 @@ test.osr, test.osu            one replay and its beatmap, for quick checks
 
 ```
 python code/osu_simulation.py                       reconstruct the test replay
-python code/parquet_converter.py 200                extract 200 players' replays
+python code/parquet_converter.py 600 out.parquet --cap=25    extract by player
 python code/osu_diagnosis.py "<player name>"        diagnosis report
 python code/osu_prediction.py                       train, baselines, ablation
 python code/osu_personalisation.py                  held-out-player experiment
@@ -366,12 +410,15 @@ python -m streamlit run app.py                      the app
 
 ## The app
 
+**Live at
+[osu-replay-analysis.streamlit.app](https://osu-replay-analysis-eujut2agcapg6zphveuwnw.streamlit.app/)**
+
 A Streamlit page that takes a pile of `.osr` and `.osu` files, pairs each replay to its
 beatmap by the MD5 stored in the replay, re-simulates every one, and shows:
 
 - **how well each replay reconstructed**, so nothing is hidden — anything under 95% is
   excluded from the profile with the reason shown
-- **weakest areas first**, ranked by percentile against the 200-player population
+- **weakest areas first**, ranked by percentile against the population
 - **strengths** above the 75th percentile
 - **predicted accuracy** next to what was actually scored
 

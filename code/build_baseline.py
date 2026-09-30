@@ -12,6 +12,7 @@ from osu_diagnosis import (
     overall_values,
 )
 from osu_prediction import (
+    DATA_FILE,
     LGB_PARAMS,
     NUM_ROUNDS,
     OBJECT_FEATURES,
@@ -71,8 +72,14 @@ def build_model(frame):
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    frame = add_diagnosis_columns(load_rows())
-    print(f"loaded {len(frame):,} rows, {frame['player'].nunique()} players")
+    data_file = DATA_FILE
+    for argument in sys.argv[1:]:
+        if argument.endswith(".parquet"):
+            data_file = OUTPUT_DIR / argument
+
+    frame = add_diagnosis_columns(load_rows(data_file))
+    print(f"loaded {len(frame):,} rows from {data_file.name}, "
+          f"{frame['player'].nunique()} players")
 
     baseline = build_baseline(frame)
     BASELINE_FILE.write_text(json.dumps(baseline), encoding="utf-8")
