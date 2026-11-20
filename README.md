@@ -171,3 +171,33 @@ python code/osu_prediction.py                               train, baselines, ab
 python code/osu_personalisation.py                          held-out player experiment
 python code/build_baseline.py                               baseline and model for the app
 ```
+
+## Summary
+
+**What it does.** It takes osu! replays, works out what happened on every single note,
+compares the player with 598 others to find their weak spots, and predicts how accurate
+they will be on maps they haven't played.
+
+**How well it works.**
+- The note-by-note reconstruction is reliable for most replays (median 97.8% agreement
+  with the game's own totals). It is weaker on slider-heavy maps and on HR+DT plays.
+- The accuracy prediction is off by about 2.7 points on average. Simply guessing the
+  player's usual accuracy is off by 3.6, so the model cuts the error by about a quarter.
+  That is good enough to tell which maps suit a player and which will be hard, but not
+  to predict an exact score.
+- It is good at spotting which notes are likely to be missed (0.843 AUC).
+- It needs a few of the player's own replays. With none, it is no better than guessing
+  the average of all players.
+
+**What I learned.**
+- Checking the simulation against the totals stored in each replay caught bugs I would
+  never have found otherwise, like the unclear first frame and replays that stop early.
+- More detail is not always better: a full slider simulation made the results worse,
+  so I removed it.
+- A model only means something next to a fair baseline. Beating the global average is
+  easy; beating the player's own average is the real test.
+- The player's history mattered more than the amount of data. Doubling the training
+  data barely changed the error.
+- Splitting the data by map, not by replay, was necessary to get an honest error,
+  because the same map in both training and test data makes the model look better
+  than it is.
